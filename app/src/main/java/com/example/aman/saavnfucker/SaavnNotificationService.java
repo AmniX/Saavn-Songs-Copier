@@ -2,10 +2,9 @@ package com.example.aman.saavnfucker;
 
 import android.service.notification.NotificationListenerService;
 import android.service.notification.StatusBarNotification;
-import android.util.Log;
 
 public class SaavnNotificationService extends NotificationListenerService {
-    private String TAG = "Aman";
+    public static StatusBarNotification currentStatusBarNotification = null;
     private static OnSaavnNotificationListener onSaavnNotificationListener;
 
 
@@ -22,15 +21,16 @@ public class SaavnNotificationService extends NotificationListenerService {
     @Override
     public void onNotificationPosted(StatusBarNotification sbn) {
         if (sbn.getPackageName().equals("com.saavn.android") && onSaavnNotificationListener != null) {
+            Logs.d("Posted. Ticker :" + sbn.getNotification().tickerText + "\t" + sbn.getPackageName());
             onSaavnNotificationListener.onNotificationPosted(sbn);
+            currentStatusBarNotification = sbn;
         }
     }
 
     @Override
     public void onNotificationRemoved(StatusBarNotification sbn) {
         if (sbn.getPackageName().equals("com.saavn.android")) {
-            Log.i(TAG, "********** onNOtificationRemoved");
-            Log.i(TAG, "Key :" + sbn.getKey() + "\t" + sbn.getNotification().tickerText + "\t" + sbn.getPackageName());
+            Logs.d("Removed. Ticker :" + sbn.getNotification().tickerText + "\t" + sbn.getPackageName());
         }
     }
 

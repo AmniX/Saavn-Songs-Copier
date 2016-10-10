@@ -6,7 +6,7 @@ android {
     buildToolsVersion "24.0.3"
     defaultConfig {
         applicationId "com.example.aman.saavnfucker"
-        minSdkVersion 23
+        minSdkVersion 18
         targetSdkVersion 24
         versionCode 1
         versionName "1.0"

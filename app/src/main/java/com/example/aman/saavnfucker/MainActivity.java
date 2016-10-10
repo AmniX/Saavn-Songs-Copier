@@ -1,80 +1,74 @@
 package com.example.aman.saavnfucker;
 
+import android.Manifest;
+import android.app.ActivityManager;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
-import android.os.Environment;
 import android.os.Handler;
-import android.os.Parcel;
-import android.os.Parcelable;
 import android.provider.Settings;
 import android.service.notification.StatusBarNotification;
 import android.support.annotation.MainThread;
 import android.support.annotation.NonNull;
-import android.support.annotation.WorkerThread;
-import android.support.design.widget.FloatingActionButton;
 import android.support.v4.content.ContextCompat;
+import android.support.v4.widget.NestedScrollView;
 import android.support.v7.app.AppCompatActivity;
+import android.support.v7.widget.SwitchCompat;
 import android.support.v7.widget.Toolbar;
-import android.text.TextUtils;
-import android.util.Log;
 import android.view.KeyEvent;
-import android.widget.RemoteViews;
+import android.widget.LinearLayout;
 import android.widget.Toast;
 
-import com.mpatric.mp3agic.ID3v2;
-import com.mpatric.mp3agic.ID3v24Tag;
 import com.mpatric.mp3agic.InvalidDataException;
-import com.mpatric.mp3agic.Mp3File;
-import com.mpatric.mp3agic.NotSupportedException;
-import com.mpatric.mp3agic.UnsupportedTagException;
 
-import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.lang.reflect.Field;
-import java.util.ArrayList;
+import java.util.List;
 
-public class MainActivity extends AppCompatActivity implements OnSaavnNotificationListener {
+public class MainActivity extends AppCompatActivity implements OnSaavnNotificationListener, Logs.OnLogListener {
     private int twiceDelay = 500;
     private int totalSongs = 0;
     private int currentSongs;
     private boolean allowed = true;
     private boolean seek2Next = true;
+    private Toolbar toolbar;
+    private SwitchCompat saveAll;
+    private SwitchCompat saveButton;
+    private LogsTextView logView;
+    private LinearLayout content_main;
+    private SwitchCompat seekButton;
+    private NestedScrollView scrollView;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+        Toolbar toolbar = (Toolbar) findViewById(R.id.toolbar);
+        setSupportActionBar(toolbar);
+        initView();
+        Logs.bind(this);
         checkPermission();
     }
 
     private void checkPermission() {
-        try {
-            for (String requestedPermission : getPackageManager().getPackageInfo(getPackageName(), PackageManager.GET_PERMISSIONS).requestedPermissions) {
-                if (ContextCompat.checkSelfPermission(MainActivity.this, requestedPermission) == PackageManager.PERMISSION_DENIED) {
-                    askPermission();
-                    return;
-                }
-            }
-            initActivity();
-        } catch (PackageManager.NameNotFoundException e) {
-            e.printStackTrace();
+        Logs.d("Checking Permissions!");
+        if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_DENIED) {
+            askPermission();
+            Logs.d("Permissions Not Granted!");
+            return;
         }
-
+        Logs.d("Permissions Granted!");
+        checkNotificationAccess();
     }
 
     private void askPermission() {
-        try {
-            requestPermissions(getPackageManager().getPackageInfo(getPackageName(), PackageManager.GET_PERMISSIONS).requestedPermissions, 40);
-        } catch (PackageManager.NameNotFoundException e) {
-            e.printStackTrace();
-        }
-
+        Logs.d("Asking Permissions!");
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, 40);
+        }else
+            initActivity();
     }
 
     @Override
@@ -84,12 +78,12 @@ public class MainActivity extends AppCompatActivity implements OnSaavnNotificati
             checkPermission();
     }
 
-    private void initActivity() {
+    private void checkNotificationAccess() {
         if (Settings.Secure.getString(this.getContentResolver(), "enabled_notification_listeners").contains(getApplicationContext().getPackageName()))
-            initActivityFinal();
+            checkDrawOverLays();
         else {
+            Toast.makeText(MainActivity.this, "Please Enable Notification Access", Toast.LENGTH_LONG).show();
             startActivityForResult(new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"), 41);
-            Toast.makeText(MainActivity.this, "Enable Notification Access", Toast.LENGTH_LONG).show();
         }
     }
 
@@ -97,20 +91,46 @@ public class MainActivity extends AppCompatActivity implements OnSaavnNotificati
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == 41)
+            checkNotificationAccess();
+        else if (requestCode == 42)
+            checkDrawOverLays();
+    }
+
+    private void checkDrawOverLays() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (Settings.canDrawOverlays(MainActivity.this))
+                initActivity();
+            else {
+                Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:" + getPackageName()));
+                startActivityForResult(intent, 42);
+                Toast.makeText(MainActivity.this, "Please Enable Draw Over Other App to Draw on Saavn App", Toast.LENGTH_LONG).show();
+            }
+        } else
             initActivity();
     }
 
-    private void initActivityFinal() {
-        totalSongs = getcurrmp3Path().getParentFile().list().length - 1;
+    private void initActivity() {
+        totalSongs = SongUtil.getcurrmp3Path().getParentFile().list().length - 1;
         SaavnNotificationService.bind(this);
-        setContentView(R.layout.activity_main);
-        Toolbar toolbar = (Toolbar) findViewById(R.id.toolbar);
-        setSupportActionBar(toolbar);
-        FloatingActionButton fab = (FloatingActionButton) findViewById(R.id.fab);
-        fab.setOnClickListener(view -> {
-            //seek2NextSong();
+        saveButton.setChecked(isServiceRunning(SaavnPopupService.class));
+        saveButton.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            if (isChecked)
+                startService(new Intent(this, SaavnPopupService.class));
+            else
+                stopService(new Intent(this, SaavnPopupService.class));
         });
     }
+
+    private boolean isServiceRunning(Class<?> serviceClass) {
+        ActivityManager manager = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+        List<ActivityManager.RunningServiceInfo> allservices = manager.getRunningServices(Integer.MAX_VALUE);
+        for (int i = 0; i < allservices.size(); i++)
+            if (allservices.get(i).service.getClassName().equals(serviceClass.getName()))
+                return true;
+        return false;
+    }
+
 
     @Override
     protected void onDestroy() {
@@ -120,7 +140,7 @@ public class MainActivity extends AppCompatActivity implements OnSaavnNotificati
 
     @Override
     public void onNotificationPosted(StatusBarNotification statusBarNotification) {
-        if (!allowed)
+        if (!allowed || !saveAll.isChecked())
             return;
         if (currentSongs >= totalSongs) {
             seek2Next = false;
@@ -130,22 +150,19 @@ public class MainActivity extends AppCompatActivity implements OnSaavnNotificati
         runOnUiThread(() -> new Handler().postDelayed(() -> allowed = true, twiceDelay));
         runOnUiThread(() -> new Handler().postDelayed(() -> {
             try {
-                String songname = saveSong(statusBarNotification);
-                if (seek2Next)
+                SongUtil.saveSong(MainActivity.this, statusBarNotification);
+                if (seek2Next && seekButton.isChecked())
                     runOnUiThread(() -> new Handler().postDelayed(this::seek2NextSong, 1000));
-                Log.d("AmniX", songname + " Song Saved");
-                Toast.makeText(MainActivity.this, songname + " Saved", Toast.LENGTH_SHORT).show();
                 currentSongs++;
             } catch (FileNotFoundException e) {
                 onNotificationPosted(statusBarNotification);
             } catch (InvalidDataException e) {
-                Log.d("AmniX", "Song Saved But Unable to save Meta Info. Possibly Different Extension");
-                Toast.makeText(MainActivity.this, "Song Saved But Unable to save Meta Info. Possibly Different Extension", Toast.LENGTH_LONG).show();
-                if (seek2Next)
+                Logs.d("Song Saved But Unable to save Meta Info. Possibly Different Extension");
+                if (seek2Next && seekButton.isChecked())
                     runOnUiThread(() -> new Handler().postDelayed(this::seek2NextSong, 3000));
                 currentSongs++;
             } catch (Exception e) {
-                Log.wtf("AmniX", e);
+                Logs.wtf(e);
             }
         }, 500));
     }
@@ -158,88 +175,23 @@ public class MainActivity extends AppCompatActivity implements OnSaavnNotificati
         sendStickyBroadcast(i);
     }
 
-    @WorkerThread
-    private String saveSong(StatusBarNotification statusBarNotification) throws Exception {
-        File folder = getMusicDirectory();
-        if (!folder.exists())
-            if (folder.mkdir())
-                folder.mkdirs();
-        File sourceFile = getcurrmp3Path();
-        SongInfo songInfo = getSongInfo(statusBarNotification);
-        File destination = new File(folder, songInfo.getFileName());
-        copy(sourceFile, destination);
-        writeTags(sourceFile, destination, songInfo);
-        sendBroadcast(new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(destination)));
-        return destination.getName();
+
+    @Override
+    public void onLogAdded(String msg) {
+        runOnUiThread(() -> {
+            logView.appendLine(msg);
+            scrollView.fullScroll(NestedScrollView.FOCUS_DOWN);
+        });
+
     }
 
-    public void writeTags(File sourceFile, File destinationFile, SongInfo songInfo) throws InvalidDataException, IOException, UnsupportedTagException, NotSupportedException {
-        ID3v2 id3v2Tag;
-        Mp3File mp3File = new Mp3File(sourceFile.getAbsoluteFile());
-        if (mp3File.hasId3v2Tag())
-            id3v2Tag = mp3File.getId3v2Tag();
-        else {
-            id3v2Tag = new ID3v24Tag();
-            mp3File.setId3v2Tag(id3v2Tag);
-        }
-        mp3File.setId3v2Tag(id3v2Tag);
-        id3v2Tag.setTitle(songInfo.getTitle());
-        id3v2Tag.setArtist(songInfo.getArtist());
-        id3v2Tag.setAlbum(songInfo.getAlbum());
-        id3v2Tag.setAlbumImage(songInfo.getImageBytes(), "image/jpeg");
-        mp3File.save(destinationFile.getAbsolutePath());
+    private void initView() {
+        toolbar = (Toolbar) findViewById(R.id.toolbar);
+        saveAll = (SwitchCompat) findViewById(R.id.saveAll);
+        saveButton = (SwitchCompat) findViewById(R.id.saveButton);
+        logView = (LogsTextView) findViewById(R.id.logView);
+        content_main = (LinearLayout) findViewById(R.id.content_main);
+        seekButton = (SwitchCompat) findViewById(R.id.seekButton);
+        scrollView = (NestedScrollView) findViewById(R.id.scrollView);
     }
-
-    public void copy(File src, File dst) throws IOException {
-        InputStream in = new FileInputStream(src);
-        OutputStream out = new FileOutputStream(dst);
-        byte[] buf = new byte[1024];
-        int len;
-        while ((len = in.read(buf)) > 0)
-            out.write(buf, 0, len);
-        in.close();
-        out.close();
-        out.flush();
-    }
-
-    private File getcurrmp3Path() {
-        if (new File(Environment.getExternalStorageDirectory() + "/Android/data/com.saavn.android/songs/curr.mp4").exists())
-            return new File(Environment.getExternalStorageDirectory() + "/Android/data/com.saavn.android/songs/curr.mp4");
-        return new File(Environment.getExternalStorageDirectory() + "/Android/data/com.saavn.android/songs/curr.mp3");
-    }
-
-    private File getMusicDirectory() {
-        return new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), "Saavn Music");
-    }
-
-    private SongInfo getSongInfo(StatusBarNotification sbn) throws Exception {
-        SongInfo songInfo = new SongInfo();
-        RemoteViews remoteView = sbn.getNotification().bigContentView;
-        Field field = remoteView.getClass().getDeclaredField("mActions");
-        field.setAccessible(true);
-        ArrayList<Parcelable> actions = (ArrayList<Parcelable>) field.get(remoteView);
-        Parcel name = Parcel.obtain();
-        actions.get(8).writeToParcel(name, 0);
-        songInfo.setTitle(getString(name));
-        Parcel album_artist = Parcel.obtain();
-        actions.get(9).writeToParcel(name, 0);
-        String[] album_artistArr = getString(album_artist).split("—");
-        songInfo.setArtist(album_artistArr[1].trim());
-        songInfo.setAlbum(album_artistArr[0].trim());
-        songInfo.setImage(sbn.getNotification().largeIcon);
-        return songInfo;
-    }
-
-    private String getString(Parcel parcel) {
-        parcel.setDataPosition(0);
-        parcel.readInt();
-        parcel.readInt();
-        parcel.readString();
-        parcel.readInt();
-        String returnValue = TextUtils.CHAR_SEQUENCE_CREATOR.createFromParcel(parcel).toString().trim();
-        parcel.recycle();
-        return returnValue;
-    }
-
-
 }
